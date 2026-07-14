@@ -28,6 +28,10 @@ jobs:
           # setuptools versions.
           pip install .[dev]
 
+      - name: Verify all subpackages installed
+        run: |
+          python -c "import medasr, medasr.data, medasr.models, medasr.cli; print('subpackages OK:', medasr.__file__)"
+
       - name: Run tests
         run: pytest -q
 

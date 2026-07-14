@@ -31,10 +31,13 @@ medasr-transcribe = "medasr.cli.transcribe:main"
 medasr-evaluate = "medasr.cli.evaluate:main"
 
 [tool.setuptools]
+# Explicit package list + package-dir. We deliberately avoid auto-discovery
+# (`packages.find`) because the discovery + `package-dir` combination is
+# interpreted inconsistently across setuptools versions for src-layout, which
+# could drop subpackages (medasr.data/models/cli) from the built wheel. An
+# explicit list is honoured identically by every setuptools version.
 package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
+packages = ["medasr", "medasr.cli", "medasr.data", "medasr.models"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
