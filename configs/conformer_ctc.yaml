@@ -1,0 +1,69 @@
+# =============================================================================
+# MedASR — Conformer-CTC configuration
+# =============================================================================
+# Every field below maps directly to a dataclass in `medasr.config`. This file
+# is the single source of truth for an experiment: change it, and the model,
+# data pipeline, and training loop all follow.
+
+experiment:
+  name: conformer_ctc_medical
+  seed: 1337
+  output_dir: runs/conformer_ctc_medical
+
+# ---- Acoustic front-end (waveform -> features) ------------------------------
+features:
+  sample_rate: 16000        # clinical dictation is resampled to 16 kHz mono
+  n_mels: 80                # log-mel filterbank channels (the "image height")
+  n_fft: 400                # 25 ms window at 16 kHz
+  hop_length: 160           # 10 ms frame shift -> 100 frames / second
+  win_length: 400
+  f_min: 0.0
+  f_max: 8000.0             # Nyquist for 16 kHz
+  normalize: true           # per-utterance mean/variance normalisation
+
+# ---- SpecAugment (training-time regularisation) -----------------------------
+spec_augment:
+  enabled: true
+  freq_masks: 2
+  freq_mask_width: 27
+  time_masks: 2
+  time_mask_ratio: 0.05     # mask width as a fraction of the utterance length
+
+# ---- Tokenizer (text <-> integer ids) ---------------------------------------
+tokenizer:
+  type: char                # "char" or "bpe"
+  model_path: artifacts/tokenizer.json
+  lowercase: true
+
+# ---- Model (Conformer encoder + CTC head) -----------------------------------
+model:
+  input_dim: 80             # must equal features.n_mels
+  d_model: 256              # encoder hidden width
+  num_layers: 16            # number of Conformer blocks
+  num_heads: 4              # attention heads
+  ffn_expansion: 4          # feed-forward inner dim = d_model * expansion
+  conv_kernel_size: 31      # depthwise conv kernel in the conformer conv module
+  subsampling_factor: 4     # conv front-end downsamples time by 4x
+  dropout: 0.1
+
+# ---- Optimisation -----------------------------------------------------------
+training:
+  batch_size: 16
+  num_epochs: 100
+  grad_accum_steps: 1
+  max_grad_norm: 5.0
+  optimizer: adamw
+  lr: 0.0015                # peak LR for the Noam/warmup schedule
+  weight_decay: 0.000001
+  warmup_steps: 10000
+  num_workers: 4
+  device: cuda              # falls back to cpu automatically if unavailable
+  amp: true                 # mixed precision when on GPU
+  log_every: 50
+  eval_every: 1             # epochs
+  keep_last_n_checkpoints: 3
+
+# ---- Decoding ---------------------------------------------------------------
+decoding:
+  strategy: greedy          # "greedy" or "beam"
+  beam_size: 8

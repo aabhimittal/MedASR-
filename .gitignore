@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Experiment outputs & data
+runs/
+data/
+artifacts/
+*.pt
+*.ckpt
+*.wav
+*.flac
+!tests/**/*.wav
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
