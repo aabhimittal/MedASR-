@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from medasr.config import Config
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_defaults_are_consistent():
@@ -39,4 +43,4 @@ def test_unknown_keys_warn(recwarn):
 
 
 def test_repo_config_is_valid():
-    Config.from_yaml("configs/conformer_ctc.yaml").validate()
+    Config.from_yaml(REPO_ROOT / "configs" / "conformer_ctc.yaml").validate()

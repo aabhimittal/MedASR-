@@ -30,6 +30,9 @@ medasr-train = "medasr.cli.train:main"
 medasr-transcribe = "medasr.cli.transcribe:main"
 medasr-evaluate = "medasr.cli.evaluate:main"
 
+[tool.setuptools]
+package-dir = { "" = "src" }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
