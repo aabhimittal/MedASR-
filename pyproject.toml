@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medasr"
+version = "0.1.0"
+description = "A Conformer-based medical speech-to-text model for clinical dictation"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Abhishek Mittal" }]
+requires-python = ">=3.9"
+keywords = ["asr", "speech-recognition", "conformer", "medical", "ctc", "pytorch"]
+
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.23.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.64.0",
+]
+
+[project.optional-dependencies]
+audio = ["torchaudio>=2.0.0", "soundfile>=0.12.1"]
+bpe = ["sentencepiece>=0.1.99"]
+serve = ["fastapi>=0.100.0", "uvicorn>=0.23.0", "python-multipart>=0.0.6"]
+dev = ["pytest>=7.0.0"]
+
+[project.scripts]
+medasr-train = "medasr.cli.train:main"
+medasr-transcribe = "medasr.cli.transcribe:main"
+medasr-evaluate = "medasr.cli.evaluate:main"
+
+[tool.setuptools]
+# Explicit package list + package-dir. We deliberately avoid auto-discovery
+# (`packages.find`) because the discovery + `package-dir` combination is
+# interpreted inconsistently across setuptools versions for src-layout, which
+# could drop subpackages (medasr.data/models/cli) from the built wheel. An
+# explicit list is honoured identically by every setuptools version.
+package-dir = { "" = "src" }
+packages = ["medasr", "medasr.cli", "medasr.data", "medasr.models"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

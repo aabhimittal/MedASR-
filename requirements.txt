@@ -1,0 +1,18 @@
+# Core deep learning
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.23.0
+
+# Config, data, and utilities
+pyyaml>=6.0
+tqdm>=4.64.0
+sentencepiece>=0.1.99      # optional BPE/unigram sub-word tokenizer
+soundfile>=0.12.1          # audio I/O fallback
+
+# Serving / demo
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+
+# Development / testing
+pytest>=7.0.0

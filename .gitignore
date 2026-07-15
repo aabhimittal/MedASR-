@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Experiment outputs & data
+# NOTE: anchored with a leading slash so these only match repo-root dirs and
+# never a source subpackage like `src/medasr/data/`.
+/runs/
+/data/
+/artifacts/
+*.pt
+*.ckpt
+*.wav
+*.flac
+!tests/**/*.wav
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
