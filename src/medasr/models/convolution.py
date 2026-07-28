@@ -52,15 +52,32 @@ class ConformerConvModule(nn.Module):
         x = self.layer_norm(x)
         x = x.transpose(1, 2)  # (B, D, T) for conv1d
 
-        if pad_mask is not None:
+        mask = pad_mask.unsqueeze(1) if pad_mask is not None else None
+        if mask is not None:
             # pad_mask: (B, T) True where padded -> zero those frames.
-            x = x.masked_fill(pad_mask.unsqueeze(1), 0.0)
+            x = x.masked_fill(mask, 0.0)
 
         x = self.pointwise_conv1(x)
         x = self.glu(x)
+
+        if mask is not None:
+            # Re-mask before the depthwise conv. This is essential, not
+            # defensive: pointwise_conv1 has a *bias*, so padded frames are no
+            # longer zero after it. The depthwise conv has a wide kernel and
+            # would smear that bias back into the last real frames -- making a
+            # transcript depend on whatever else happened to be in the batch.
+            # Zeroing here matches what F.conv1d's own padding supplies when
+            # the utterance is run alone, which is what makes batching safe.
+            x = x.masked_fill(mask, 0.0)
+
         x = self.depthwise_conv(x)
         x = self.batch_norm(x)
         x = self.activation(x)
         x = self.pointwise_conv2(x)
         x = self.dropout(x)
+
+        if mask is not None:
+            # Keep padding clean for the residual add and the next block.
+            x = x.masked_fill(mask, 0.0)
+
         return x.transpose(1, 2)  # back to (B, T, D)

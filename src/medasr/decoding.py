@@ -74,27 +74,66 @@ def beam_search_decode(
     output_lengths: torch.Tensor,
     tokenizer: BaseTokenizer,
     beam_size: int = 8,
+    lm=None,
+    lm_weight: float = 0.0,
+    insertion_bonus: float = 0.0,
 ) -> List[str]:
     """CTC prefix beam search over a batch. Pure-Python, CPU-side.
 
     For each prefix we track two scores: ``p_b`` (paths ending in blank) and
     ``p_nb`` (paths ending in a real symbol). Keeping them separate is what
     makes the repeat-collapse bookkeeping correct.
+
+    Passing ``lm`` (anything with ``log_prob(context, char)``, e.g.
+    :class:`medasr.lm.CharNGramLM`) enables **shallow fusion**: the beam is
+    ranked by ``acoustic + lm_weight * lm + insertion_bonus * length``. The
+    bonus offsets the LM's bias toward shorter strings — without it, fusion
+    tends to delete words, which in a clinical note can invert the meaning.
     """
     log_probs = log_probs.cpu()
     results = []
     for b in range(log_probs.size(0)):
         length = int(output_lengths[b].item())
         results.append(
-            _beam_search_single(log_probs[b, :length], tokenizer, beam_size)
+            _beam_search_single(
+                log_probs[b, :length], tokenizer, beam_size,
+                lm, lm_weight, insertion_bonus,
+            )
         )
     return results
 
 
 def _beam_search_single(
-    log_probs: torch.Tensor, tokenizer: BaseTokenizer, beam_size: int
+    log_probs: torch.Tensor,
+    tokenizer: BaseTokenizer,
+    beam_size: int,
+    lm=None,
+    lm_weight: float = 0.0,
+    insertion_bonus: float = 0.0,
 ) -> str:
     blank = tokenizer.blank_id
+    use_lm = lm is not None and lm_weight != 0.0
+    # Cache LM scores per prefix so each is computed once, not once per rank.
+    lm_cache: dict = {(): 0.0}
+
+    def lm_score(prefix: tuple) -> float:
+        """Cumulative LM log-prob of a prefix, built incrementally."""
+        if prefix in lm_cache:
+            return lm_cache[prefix]
+        parent = lm_score(prefix[:-1])
+        context = tokenizer.decode(list(prefix[:-1]))
+        char = tokenizer.decode([prefix[-1]])
+        # Multi-char or empty pieces (BPE) score as a unit.
+        delta = sum(lm.log_prob(context + char[:i], char[i]) for i in range(len(char)))
+        lm_cache[prefix] = parent + delta
+        return lm_cache[prefix]
+
+    def rank(prefix: tuple, scores: tuple) -> float:
+        total = _logsumexp(scores[0], scores[1])
+        if use_lm:
+            total += lm_weight * lm_score(prefix) + insertion_bonus * len(prefix)
+        return total
+
     # beam maps prefix(tuple of ids) -> [p_blank, p_non_blank] in log space.
     beam = {(): (0.0, -math.inf)}
 
@@ -132,15 +171,13 @@ def _beam_search_single(
                     e_b, e_nb = next_beam[new_prefix]
                     next_beam[new_prefix] = (e_b, _logsumexp(e_nb, p_total + p))
 
-        # Prune to the top `beam_size` prefixes by total probability.
+        # Prune to the top `beam_size` prefixes by fused score.
         scored = sorted(
-            next_beam.items(),
-            key=lambda kv: _logsumexp(kv[1][0], kv[1][1]),
-            reverse=True,
+            next_beam.items(), key=lambda kv: rank(kv[0], kv[1]), reverse=True
         )
         beam = dict(scored[:beam_size])
 
-    best_prefix = max(beam.items(), key=lambda kv: _logsumexp(kv[1][0], kv[1][1]))[0]
+    best_prefix = max(beam.items(), key=lambda kv: rank(kv[0], kv[1]))[0]
     return tokenizer.decode(list(best_prefix))
 
 
@@ -150,10 +187,16 @@ def decode(
     tokenizer: BaseTokenizer,
     strategy: str = "greedy",
     beam_size: int = 8,
+    lm=None,
+    lm_weight: float = 0.0,
+    insertion_bonus: float = 0.0,
 ) -> List[str]:
     """Dispatch to the requested decoding strategy."""
     if strategy == "greedy":
         return greedy_decode(log_probs, output_lengths, tokenizer)
     if strategy == "beam":
-        return beam_search_decode(log_probs, output_lengths, tokenizer, beam_size)
+        return beam_search_decode(
+            log_probs, output_lengths, tokenizer, beam_size,
+            lm, lm_weight, insertion_bonus,
+        )
     raise ValueError(f"Unknown decoding strategy: {strategy}")
