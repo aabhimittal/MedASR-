@@ -23,6 +23,7 @@ algorithm.
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional
 
 import torch
@@ -31,6 +32,33 @@ import torch.nn.functional as F
 
 from medasr.config import ModelConfig
 from medasr.models.encoder import ConformerEncoder
+
+
+def required_frames(target: torch.Tensor, length: int) -> int:
+    """Minimum CTC frames to emit ``target[:length]``.
+
+    Every token needs a frame, plus one blank between each pair of *identical*
+    consecutive tokens — otherwise the collapse rule would merge them.
+    """
+    if length <= 0:
+        return 0
+    seq = target[:length]
+    repeats = int((seq[1:] == seq[:-1]).sum().item()) if length > 1 else 0
+    return length + repeats
+
+
+def count_infeasible(
+    output_lengths: torch.Tensor,
+    targets: torch.Tensor,
+    target_lengths: torch.Tensor,
+) -> int:
+    """How many items in the batch cannot be aligned by CTC."""
+    bad = 0
+    for i in range(len(target_lengths)):
+        need = required_frames(targets[i], int(target_lengths[i].item()))
+        if need > int(output_lengths[i].item()):
+            bad += 1
+    return bad
 
 
 class ConformerCTC(nn.Module):
@@ -72,7 +100,35 @@ class ConformerCTC(nn.Module):
         output_lengths: torch.Tensor,
         targets: torch.Tensor,
         target_lengths: torch.Tensor,
+        strict: bool = False,
     ) -> torch.Tensor:
+        """CTC loss, with an explicit guard for infeasible targets.
+
+        A target is *infeasible* when it needs more frames than the encoder
+        produced (remember repeated characters need a blank between them). CTC
+        assigns it probability zero, so the loss is ``inf``. We construct the
+        loss with ``zero_infinity=True`` to stop that poisoning the gradients —
+        but that has a nasty consequence worth naming: those utterances then
+        contribute **exactly zero loss and zero gradient**, silently. A corpus
+        with systematically over-long transcripts (or an over-aggressive
+        subsampling factor) will train to a plausible-looking loss curve while
+        learning nothing from the affected clips.
+
+        So we detect the condition and surface it. ``strict=True`` raises;
+        otherwise we warn once per call with the count, which is the signal a
+        practitioner needs to go fix their manifest.
+        """
+        infeasible = count_infeasible(output_lengths, targets, target_lengths)
+        if infeasible:
+            msg = (
+                f"{infeasible}/{len(target_lengths)} target(s) are longer than the "
+                "encoder output allows; CTC gives them zero gradient. Check for "
+                "over-long transcripts, truncated audio, or too much subsampling."
+            )
+            if strict:
+                raise ValueError(msg)
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
         # CTCLoss wants time-major input: (T', B, vocab_size).
         log_probs_tbc = log_probs.transpose(0, 1)
         return self.ctc_loss(

@@ -29,7 +29,43 @@ small, documented, and paired with a step-by-step conceptual guide.
 📖 **New here? Read the [step-by-step conceptual guide](docs/concepts.md)** —
 it walks one utterance from microphone to transcript and explains every design
 choice. See [`docs/architecture.md`](docs/architecture.md) for the data-flow
-diagram and shapes.
+diagram and shapes, and [`docs/production.md`](docs/production.md) for the
+safety layers, streaming, and edge-case behaviour.
+
+---
+
+## Beyond the transcript
+
+A recogniser that returns only a string forces every consumer to assume it is
+correct. MedASR returns what a chart entry actually needs:
+
+```python
+result = transcriber.transcribe_detailed(waveform)
+
+result.text            # "start metformin 500 mg twice daily"
+result.words           # per-word timings for cursor placement / replay
+result.confidence      # per-word posterior + entropy
+result.safety_flags    # look-alike drugs, implausible doses
+result.needs_review    # one boolean a UI can gate on
+result.review_reasons  # why, in words
+```
+
+| Feature | Module | What it protects against |
+|---------|--------|--------------------------|
+| **Word timestamps** | `alignment.py` | CTC forced alignment for click-to-replay |
+| **Confidence + entropy** | `confidence.py` | Silent overconfidence on misheard words |
+| **Drug-name safety** | `lexicon.py` | Look-alike drugs (`hydralazine`/`hydroxyzine`) |
+| **PHI redaction** | `phi.py` | Identifiers leaking into logs and corpora |
+| **Streaming** | `streaming.py` | Latency — live dictation from a non-causal model |
+| **LM fusion** | `lm.py` | Acoustically plausible but nonsensical phrasing |
+| **Audio hardening** | `audio.py` | NaNs, clipping, DC offset, sub-frame clips |
+
+Two safety properties the test suite pins down:
+
+* Look-alike drug pairs are **flagged, never auto-corrected** — silently
+  swapping `hydralazine` for `hydroxyzine` changes the prescription.
+* A word's confidence is its **weakest** character, not the average — that is
+  exactly where `15 mg` becomes `1.5 mg`.
 
 ---
 
@@ -154,16 +190,23 @@ src/medasr/
 ├── text.py              Medical text normalisation
 ├── tokenizer.py         Char / BPE tokenizers (blank at id 0)
 ├── metrics.py           WER + CER
-├── decoding.py          Greedy + CTC prefix beam search
-├── inference.py         Transcriber (checkpoint → transcript)
+├── decoding.py          Greedy + CTC prefix beam search (+ LM fusion)
+├── inference.py         Transcriber + DetailedTranscription
 ├── training.py          Trainer + Noam warmup schedule
+├── audio.py             Audio validation & conditioning
+├── alignment.py         CTC forced alignment → word timestamps
+├── confidence.py        Per-word confidence & entropy
+├── lexicon.py           Drug-name correction + clinical safety flags
+├── phi.py               PHI detection & redaction
+├── streaming.py         Chunked streaming recognition
+├── lm.py                Character n-gram LM for shallow fusion
 ├── data/                Features · SpecAugment · Dataset
 ├── models/              Subsampling · FFN · Attention · Conv · Encoder · CTC
 └── cli/                 train · transcribe · evaluate · build_tokenizer · synth_data
-app/api.py               FastAPI dictation endpoint
+app/api.py               FastAPI: /transcribe and /transcribe/detailed
 configs/                 Experiment YAML
-docs/                    Conceptual guide + architecture reference
-tests/                   Unit + end-to-end tests
+docs/                    Concepts · architecture · production guide
+tests/                   Unit, integration, and industrial edge-case tests
 ```
 
 ---
@@ -174,9 +217,21 @@ tests/                   Unit + end-to-end tests
 pytest -q            # full suite (runs on CPU in seconds)
 ```
 
-Tests cover config validation, normalisation, tokenizer round-trips, feature
-shapes, the model forward/backward, both decoders, the metrics, and a full
-data→train→decode→evaluate smoke test.
+The suite covers the core pipeline (config, normalisation, tokenizer
+round-trips, feature shapes, model forward/backward, both decoders, metrics,
+and a data→train→decode→evaluate smoke test) plus **industrial edge cases**:
+degenerate batches, padding invariance, CTC-infeasible targets, NaN/clipped/
+silent audio, boundary-length inputs, determinism, and checkpoint fidelity.
+
+Writing those tests found two real bugs, both invisible in ordinary use:
+
+1. **Padding changed the transcript.** A bias in the conv module's pointwise
+   layer leaked into padded frames, and the wide depthwise conv smeared it back
+   into real audio — so output depended on what else was in the batch.
+2. **Clipping detection was destroyed by DC removal**, which turned a
+   rail-pinned clip into apparent silence before the check ran.
+
+Both are described in [`docs/production.md`](docs/production.md#6-two-real-bugs-the-edge-case-suite-caught).
 
 Continuous integration (`.github/workflows/ci.yml`) runs the suite on Python
 3.9 and 3.11 plus a CLI smoke test on every push and PR.
@@ -185,10 +240,14 @@ Continuous integration (`.github/workflows/ci.yml`) runs the suite on Python
 
 ## Roadmap
 
-- [ ] RNN-Transducer / attention decoder for streaming with an internal LM
-- [ ] Shallow-fusion external language model in beam search
-- [ ] Word-level timestamps for dictation cursor placement
+- [x] Shallow-fusion external language model in beam search
+- [x] Word-level timestamps for dictation cursor placement
+- [x] Per-word confidence scoring and human-review routing
+- [x] Streaming (chunked) recognition
+- [x] PHI redaction and drug-name safety checks
+- [ ] RNN-Transducer / attention decoder for true streaming with an internal LM
 - [ ] Punctuation & truecasing post-processor
+- [ ] NER-based de-identification to complement the rule-based pass
 - [ ] Distillation to a smaller on-device model
 
 ## References & license
